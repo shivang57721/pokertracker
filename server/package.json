@@ -1,0 +1,19 @@
+{
+  "name": "pokertracker-server",
+  "version": "1.0.0",
+  "description": "PokerStars hand history tracker backend",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "nodemon src/index.js"
+  },
+  "dependencies": {
+    "chokidar": "^5.0.0",
+    "cors": "^2.8.5",
+    "express": "^4.18.3",
+    "sql.js": "^1.12.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.0"
+  }
+}
