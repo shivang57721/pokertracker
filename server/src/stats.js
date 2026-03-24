@@ -5,7 +5,9 @@ const { getDb, queryAll, queryOne } = require('./db');
 // ── Filter helper ─────────────────────────────────────────────────────────────
 // Returns { extra: " AND ...", params: [...] } for appending to WHERE clauses.
 // All stat queries alias the hands table as `h`.
-function buildFilter(opts) {
+// Position filter uses h.hand_id subquery so it's compatible with both
+// hand_players (hp) and hand_actions (ha) based queries.
+function buildFilter(opts, player) {
   const conds = [];
   const params = [];
   if (opts.from)              { conds.push('h.date_played >= ?'); params.push(opts.from); }
@@ -15,6 +17,10 @@ function buildFilter(opts) {
   if (opts.is_tournament != null) {
     conds.push('h.is_tournament = ?');
     params.push(opts.is_tournament ? 1 : 0);
+  }
+  if (opts.position && player) {
+    conds.push('h.hand_id IN (SELECT hand_id FROM hand_players WHERE player = ? AND position = ?)');
+    params.push(player, opts.position);
   }
   return {
     extra:  conds.length ? ' AND ' + conds.join(' AND ') : '',
@@ -32,7 +38,7 @@ const round2 = n => Math.round(n * 100) / 100;
 // ─────────────────────────────────────────────────────────────────────────────
 async function computeStats(player, opts = {}) {
   const db = await getDb();
-  const f  = buildFilter(opts);
+  const f  = buildFilter(opts, player);
 
   // ── Total hands & basic player data ───────────────────────────────────────
   const handRows = queryAll(db,
@@ -51,11 +57,14 @@ async function computeStats(player, opts = {}) {
   // ── Amount invested per hand (player's total $ put into pot) ──────────────
   // Using JOIN instead of IN to stay within SQLite variable limits.
   const investedRows = queryAll(db,
-    `SELECT ha.hand_id, SUM(COALESCE(ha.amount, 0)) AS invested
+    `SELECT ha.hand_id,
+            SUM(CASE WHEN ha.action = 'uncalled_return'
+                     THEN -COALESCE(ha.amount, 0)
+                     ELSE  COALESCE(ha.amount, 0) END) AS invested
      FROM hand_actions ha
      JOIN hands h ON h.hand_id = ha.hand_id
      WHERE ha.player = ?${f.extra}
-       AND ha.action IN ('post_sb','post_bb','post_ante','call','bet','raise')
+       AND ha.action IN ('post_sb','post_bb','post_ante','call','bet','raise','uncalled_return')
      GROUP BY ha.hand_id`,
     [player, ...f.params]
   );
@@ -347,7 +356,7 @@ const SESSION_GAP_MS = 30 * 60 * 1000;
 
 async function computeSessions(player, opts = {}) {
   const db = await getDb();
-  const f  = buildFilter(opts);
+  const f  = buildFilter(opts, player);
 
   const hands = queryAll(db,
     `SELECT hp.hand_id, hp.amount_won,
@@ -364,11 +373,14 @@ async function computeSessions(player, opts = {}) {
 
   // Amount invested per hand
   const investedRows = queryAll(db,
-    `SELECT ha.hand_id, SUM(COALESCE(ha.amount, 0)) AS invested
+    `SELECT ha.hand_id,
+            SUM(CASE WHEN ha.action = 'uncalled_return'
+                     THEN -COALESCE(ha.amount, 0)
+                     ELSE  COALESCE(ha.amount, 0) END) AS invested
      FROM hand_actions ha
      JOIN hands h ON h.hand_id = ha.hand_id
      WHERE ha.player = ?${f.extra}
-       AND ha.action IN ('post_sb','post_bb','post_ante','call','bet','raise')
+       AND ha.action IN ('post_sb','post_bb','post_ante','call','bet','raise','uncalled_return')
      GROUP BY ha.hand_id`,
     [player, ...f.params]
   );
@@ -453,7 +465,7 @@ function closeSession(s) {
 // ─────────────────────────────────────────────────────────────────────────────
 async function computeProfitCurve(player, opts = {}) {
   const db = await getDb();
-  const f  = buildFilter(opts);
+  const f  = buildFilter(opts, player);
 
   const hands = queryAll(db,
     `SELECT hp.hand_id, hp.amount_won,
@@ -468,11 +480,14 @@ async function computeProfitCurve(player, opts = {}) {
   if (!hands.length) return { cash: [], tournament: [] };
 
   const investedRows = queryAll(db,
-    `SELECT ha.hand_id, SUM(COALESCE(ha.amount, 0)) AS invested
+    `SELECT ha.hand_id,
+            SUM(CASE WHEN ha.action = 'uncalled_return'
+                     THEN -COALESCE(ha.amount, 0)
+                     ELSE  COALESCE(ha.amount, 0) END) AS invested
      FROM hand_actions ha
      JOIN hands h ON h.hand_id = ha.hand_id
      WHERE ha.player = ?${f.extra}
-       AND ha.action IN ('post_sb','post_bb','post_ante','call','bet','raise')
+       AND ha.action IN ('post_sb','post_bb','post_ante','call','bet','raise','uncalled_return')
      GROUP BY ha.hand_id`,
     [player, ...f.params]
   );
@@ -530,6 +545,59 @@ async function getAvailableFilters(player) {
   return { game_types: gameTypes, stakes, date_range: dateRange };
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// computePositionStats — BB/100 per position for cash hands
+// ─────────────────────────────────────────────────────────────────────────────
+async function computePositionStats(player, opts = {}) {
+  const db = await getDb();
+  const f  = buildFilter(opts, player);
+
+  const handRows = queryAll(db,
+    `SELECT hp.hand_id, hp.position, hp.amount_won, h.big_blind
+     FROM hand_players hp
+     JOIN hands h ON h.hand_id = hp.hand_id
+     WHERE hp.player = ?${f.extra}
+       AND h.is_tournament = 0
+       AND hp.position IS NOT NULL`,
+    [player, ...f.params]
+  );
+  if (!handRows.length) return [];
+
+  const investedRows = queryAll(db,
+    `SELECT ha.hand_id,
+            SUM(CASE WHEN ha.action = 'uncalled_return'
+                     THEN -COALESCE(ha.amount, 0)
+                     ELSE  COALESCE(ha.amount, 0) END) AS invested
+     FROM hand_actions ha
+     JOIN hands h ON h.hand_id = ha.hand_id
+     WHERE ha.player = ?${f.extra}
+       AND h.is_tournament = 0
+       AND ha.action IN ('post_sb','post_bb','post_ante','call','bet','raise','uncalled_return')
+     GROUP BY ha.hand_id`,
+    [player, ...f.params]
+  );
+  const investedByHand = Object.fromEntries(
+    investedRows.map(r => [r.hand_id, r.invested || 0])
+  );
+
+  const byPos = {};
+  for (const r of handRows) {
+    const pos = r.position;
+    if (!byPos[pos]) byPos[pos] = { net: 0, bbSum: 0, count: 0 };
+    const net = r.amount_won - (investedByHand[r.hand_id] || 0);
+    byPos[pos].net   += net;
+    byPos[pos].count++;
+    if (r.big_blind > 0) byPos[pos].bbSum += net / r.big_blind;
+  }
+
+  return Object.entries(byPos).map(([position, d]) => ({
+    position,
+    hand_count: d.count,
+    net_usd:    round2(d.net),
+    bb_100:     d.count > 0 ? round2((d.bbSum / d.count) * 100) : null,
+  }));
+}
+
 function emptyStats(player, opts) {
   return {
     player, filters: opts,
@@ -542,4 +610,4 @@ function emptyStats(player, opts) {
   };
 }
 
-module.exports = { computeStats, computeSessions, computeProfitCurve, getAvailableFilters };
+module.exports = { computeStats, computeSessions, computeProfitCurve, getAvailableFilters, computePositionStats };

@@ -50,11 +50,19 @@ function startWatcher(watchPath, onNewHands) {
     return null;
   }
 
-  const watcher = chokidar.watch(path.join(watchPath, '*.txt'), {
+  // Watch the directory itself (no glob) — avoids chokidar issues with spaces
+  // in paths. Filter to .txt files in the event handler instead.
+  const watcher = chokidar.watch(watchPath, {
     persistent: true,
     // Don't re-fire for files that existed before the server started.
     // The startup import already handles those.
     ignoreInitial: true,
+    recursive: true, // watch subdirectories (PokerStars sometimes creates per-table dirs)
+    ignored: (filePath) => {
+      // Ignore directories and non-.txt files
+      const base = path.basename(filePath);
+      return base.includes('.') && !base.endsWith('.txt');
+    },
     awaitWriteFinish: {
       // Wait until the file is stable for 500 ms before firing.
       // PokerStars flushes each action to disk, so this prevents us from
@@ -65,16 +73,19 @@ function startWatcher(watchPath, onNewHands) {
   });
 
   const handleFile = async (filePath, event) => {
-    const label = `[watcher] ${event} ${path.basename(filePath)}`;
+    if (!filePath.endsWith('.txt')) return;
+    const label = `[watcher] ${event} ${filePath}`;
+    console.log(`[watcher] Event received: ${event} → ${filePath}`);
     try {
       const result = await processFile(filePath);
       if (result.imported > 0) {
         console.log(`${label}: +${result.imported} hand(s) imported`);
         if (onNewHands) onNewHands({ file: path.basename(filePath), ...result });
       } else if (result.errors > 0) {
-        console.warn(`${label}: ${result.errors} parse error(s)`);
+        console.warn(`${label}: ${result.errors} parse error(s)`, result.errorDetails);
+      } else {
+        console.log(`${label}: no new hands (all already imported)`);
       }
-      // Silently skip when imported=0 and errors=0 (all hands already in DB)
     } catch (err) {
       console.error(`${label}: ${err.message}`);
     }
@@ -83,8 +94,14 @@ function startWatcher(watchPath, onNewHands) {
   watcher
     .on('add',    filePath => handleFile(filePath, 'new file'))
     .on('change', filePath => handleFile(filePath, 'changed'))
+    .on('addDir', dirPath  => console.log(`[watcher] New directory detected: ${dirPath}`))
     .on('error',  err      => console.error('[watcher] error:', err))
-    .on('ready',  ()       => console.log(`[watcher] Watching ${watchPath}`));
+    .on('ready',  ()       => {
+      const watched = watcher.getWatched();
+      const dirs    = Object.keys(watched);
+      const txtFiles = dirs.reduce((n, d) => n + watched[d].filter(f => f.endsWith('.txt')).length, 0);
+      console.log(`[watcher] Ready — watching ${dirs.length} dir(s), ${txtFiles} .txt file(s) under ${watchPath}`);
+    });
 
   return watcher;
 }

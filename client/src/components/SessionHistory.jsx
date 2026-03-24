@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import Sparkline from './Sparkline'
 import { fetchSessions, fetchAvailableFilters } from '../lib/api'
+import useAutoRefresh from '../lib/useAutoRefresh'
 import { fmtUSD, fmtInt, fmtDuration, fmtStakes } from '../lib/format'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -190,6 +191,7 @@ export default function SessionHistory({ hero }) {
   }, [hero, from, to, stakes, isTournament])
 
   useEffect(() => { load() }, [load])
+  useAutoRefresh(load)
 
   // Reset page when sort or filters change
   useEffect(() => { setPage(1) }, [sort, from, to, stakes, isTournament])

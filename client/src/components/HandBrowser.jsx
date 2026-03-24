@@ -2,7 +2,9 @@ import { useState, useEffect, useCallback } from 'react'
 import HoleCards   from './HoleCards'
 import HandReplay  from './HandReplay'
 import { fetchHands, fetchAvailableFilters } from '../lib/api'
-import { fmtUSD, fmtDateTime, fmtStakes } from '../lib/format'
+import useAutoRefresh from '../lib/useAutoRefresh'
+import { fmtUSD, fmtBB, fmtDateTime, fmtStakes } from '../lib/format'
+import useDisplayMode from '../lib/useDisplayMode'
 
 const PAGE_SIZE = 50
 
@@ -30,10 +32,12 @@ function fmtChips(n) {
   return (rounded > 0 ? '+' : '') + rounded.toLocaleString() + ' chips'
 }
 
-function NetBadge({ net, isTournament }) {
+function NetBadge({ net, isTournament, bigBlind, isBB }) {
   if (net == null) return <span className="text-gray-600">—</span>
   const cls = net > 0 ? 'text-emerald-400' : net < 0 ? 'text-red-400' : 'text-gray-500'
-  const label = isTournament ? fmtChips(net) : fmtUSD(net)
+  const label = isTournament ? fmtChips(net)
+    : (isBB && bigBlind) ? fmtBB(net, bigBlind, true)
+    : fmtUSD(net)
   return <span className={`tabular-nums font-semibold text-xs ${cls}`}>{label}</span>
 }
 
@@ -49,6 +53,8 @@ function PosBadge({ pos }) {
 
 // ── Main component ────────────────────────────────────────────────────────────
 export default function HandBrowser({ hero }) {
+  const [isBB, setIsBB] = useDisplayMode()
+
   // Top-level mode — mirrors dashboard toggle
   const [mode, setMode] = useState('cash')
 
@@ -104,6 +110,7 @@ export default function HandBrowser({ hero }) {
   }, [hero, page, from, to, stakes, gameType, mode, sortBy, sortDir, minNet, maxNet])
 
   useEffect(() => { load() }, [load])
+  useAutoRefresh(load)
 
   const resetPage = () => setPage(1)
 
@@ -159,6 +166,23 @@ export default function HandBrowser({ hero }) {
           </div>
 
           <div className="w-px h-6 bg-gray-700" />
+
+          {/* BB / $ toggle — cash mode only */}
+          {mode === 'cash' && (
+            <div className="flex rounded-lg border border-gray-700 overflow-hidden text-xs shrink-0">
+              <button onClick={() => setIsBB(true)}
+                className={`px-2 py-1 font-medium transition-colors ${isBB ? 'bg-gray-700 text-gray-100' : 'bg-gray-900 text-gray-500 hover:text-gray-300'}`}>
+                BB
+              </button>
+              <button onClick={() => setIsBB(false)}
+                className={`px-2 py-1 font-medium transition-colors ${!isBB ? 'bg-gray-700 text-gray-100' : 'bg-gray-900 text-gray-500 hover:text-gray-300'}`}>
+                $
+              </button>
+            </div>
+          )}
+
+          <div className="w-px h-6 bg-gray-700" />
+
 
           {/* Date range */}
           <input type="date" value={from} onChange={e => { setFrom(e.target.value); resetPage() }}
@@ -293,7 +317,7 @@ export default function HandBrowser({ hero }) {
 
                   {/* Result */}
                   <td className="py-2.5 px-3 pr-4">
-                    <NetBadge net={hand.net_profit} isTournament={mode === 'tournament'} />
+                    <NetBadge net={hand.net_profit} isTournament={mode === 'tournament'} bigBlind={hand.big_blind} isBB={isBB} />
                   </td>
                 </tr>
               ))}

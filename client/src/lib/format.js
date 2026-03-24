@@ -6,6 +6,16 @@ export function fmtUSD(n, forceSign = false) {
   return forceSign ? '±$0.00' : '$0.00'
 }
 
+// Convert dollar amount to BB display. showSign=true for results, false for sizes.
+export function fmtBB(dollars, bigBlind, showSign = false) {
+  if (dollars == null || !bigBlind) return '—'
+  const bb      = dollars / bigBlind
+  const rounded = Math.round(bb * 10) / 10
+  const str     = Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1)
+  const sign    = showSign && rounded > 0 ? '+' : ''
+  return `${sign}${str}BB`
+}
+
 export function fmtPct(n) {
   return n == null ? '—' : `${n.toFixed(1)}%`
 }

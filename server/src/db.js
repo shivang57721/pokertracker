@@ -77,11 +77,42 @@ async function getDb() {
       FOREIGN KEY (hand_id) REFERENCES hands(hand_id)
     );
 
+    -- AI coaching analysis (one row per hand; re-analyzed on demand)
+    CREATE TABLE IF NOT EXISTS ai_analysis (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      hand_id    TEXT NOT NULL UNIQUE,
+      analysis   TEXT NOT NULL,
+      model      TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (hand_id) REFERENCES hands(hand_id)
+    );
+
+    -- Analysis flags (one row per flag per hand; _analyzed sentinel for processed hands)
+    CREATE TABLE IF NOT EXISTS hand_flags (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      hand_id     TEXT NOT NULL,
+      flag_type   TEXT NOT NULL,
+      street      TEXT,
+      severity    INTEGER NOT NULL DEFAULT 1,
+      description TEXT,
+      created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (hand_id) REFERENCES hands(hand_id)
+    );
+
     CREATE INDEX IF NOT EXISTS idx_hands_date       ON hands(date_played);
     CREATE INDEX IF NOT EXISTS idx_hands_tournament ON hands(tournament_id);
     CREATE INDEX IF NOT EXISTS idx_players_player   ON hand_players(player);
     CREATE INDEX IF NOT EXISTS idx_players_hand     ON hand_players(hand_id);
     CREATE INDEX IF NOT EXISTS idx_actions_hand     ON hand_actions(hand_id);
+    CREATE INDEX IF NOT EXISTS idx_flags_hand       ON hand_flags(hand_id);
+    CREATE INDEX IF NOT EXISTS idx_flags_type       ON hand_flags(flag_type);
+
+    -- Hands the user has marked as reviewed
+    CREATE TABLE IF NOT EXISTS reviewed_hands (
+      hand_id    TEXT PRIMARY KEY,
+      reviewed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (hand_id) REFERENCES hands(hand_id)
+    );
   `);
 
   saveDb();

@@ -27,7 +27,7 @@ function fmtChips(n) {
   return '0'
 }
 
-export default function SummaryBar({ stats, sessions, loading, mode = 'cash' }) {
+export default function SummaryBar({ stats, sessions, loading, mode = 'cash', flaggedHands = null }) {
   const hands   = stats?.total_hands ?? null
   const nSess   = sessions?.length ?? null
   const avgDur  = sessions?.length
@@ -43,7 +43,7 @@ export default function SummaryBar({ stats, sessions, loading, mode = 'cash' }) 
 
     return (
       <div className="bg-gray-900 border border-gray-800 rounded-xl px-6 py-4">
-        <div className="flex flex-wrap gap-6 sm:gap-8 items-center">
+        <div className="flex flex-wrap gap-6 sm:gap-8 items-center ">
           <Tile
             label="Hands"
             value={loading ? null : fmtInt(hands)}
@@ -52,7 +52,7 @@ export default function SummaryBar({ stats, sessions, loading, mode = 'cash' }) 
           />
           <Divider />
           <Tile
-            label="Cash Net"
+            label="PnL"
             value={loading ? null : fmtUSD(net)}
             valueClass={netClass}
             loading={loading}
@@ -72,15 +72,6 @@ export default function SummaryBar({ stats, sessions, loading, mode = 'cash' }) 
             sub={avgDur ? `avg ${fmtDuration(avgDur)}/session` : undefined}
             loading={loading}
           />
-          <Divider />
-          <Tile
-            label="VPIP / PFR"
-            value={loading ? null :
-              stats ? `${stats.preflop.vpip ?? '—'}% / ${stats.preflop.pfr ?? '—'}%` : '—'
-            }
-            sub="preflop style"
-            loading={loading}
-          />
         </div>
       </div>
     )
@@ -92,7 +83,7 @@ export default function SummaryBar({ stats, sessions, loading, mode = 'cash' }) 
 
   return (
     <div className="bg-gray-900 border border-yellow-900/40 rounded-xl px-6 py-4">
-      <div className="flex flex-wrap gap-6 sm:gap-8 items-center">
+      <div className="flex flex-wrap gap-6 sm:gap-8 items-center ">
         <Tile
           label="Hands"
           value={loading ? null : fmtInt(hands)}
@@ -112,15 +103,6 @@ export default function SummaryBar({ stats, sessions, loading, mode = 'cash' }) 
           label="Sessions"
           value={loading ? null : fmtInt(nSess)}
           sub={avgDur ? `avg ${fmtDuration(avgDur)}/session` : undefined}
-          loading={loading}
-        />
-        <Divider />
-        <Tile
-          label="VPIP / PFR"
-          value={loading ? null :
-            stats ? `${stats.preflop.vpip ?? '—'}% / ${stats.preflop.pfr ?? '—'}%` : '—'
-          }
-          sub="preflop style"
           loading={loading}
         />
         <Divider />

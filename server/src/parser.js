@@ -147,13 +147,35 @@ function parseHand(rawText) {
   const ord = { v: 0 };
   let inSummary = false;
 
+  // Track each player's total commitment per street so that raise actions
+  // store the actual chips put in (total_amount - prior) rather than the
+  // PokerStars increment (total_amount - previous_bet_level).
+  const streetCommit  = {};
+  let   commitStreet  = null;
+
   const addAction = (player, action, amount, totalAmount, isAllIn) => {
+    // Reset commitments on street change
+    if (street !== commitStreet) {
+      Object.keys(streetCommit).forEach(k => delete streetCommit[k]);
+      commitStreet = street;
+    }
+
+    let netAmount = amount;
+    if (action === 'raise' && totalAmount != null) {
+      // Actual chips added = total street commitment - what was already in
+      const prior = streetCommit[player] || 0;
+      netAmount = totalAmount - prior;
+      streetCommit[player] = totalAmount;
+    } else if (amount != null && action !== 'uncalled_return') {
+      streetCommit[player] = (streetCommit[player] || 0) + amount;
+    }
+
     hand.actions.push({
       street,
       action_order: ord.v++,
       player,
       action,
-      amount: amount ?? null,
+      amount: netAmount ?? null,
       total_amount: totalAmount ?? amount ?? null,
       is_all_in: isAllIn || false,
     });
@@ -292,8 +314,12 @@ function parseHand(rawText) {
       continue;
     }
 
-    // "Uncalled bet ($X) returned to Player" — skip, not a betting action
-    if (line.startsWith('Uncalled bet')) continue;
+    // "Uncalled bet ($X) returned to Player" — subtract from invested amount
+    const uncalledM = line.match(/^Uncalled bet \(\$?([\d.]+)\) returned to (.+)$/);
+    if (uncalledM) {
+      addAction(uncalledM[2].trim(), 'uncalled_return', parseAmount(uncalledM[1]), null, false);
+      continue;
+    }
 
     // ── BLIND / ANTE POSTS ────────────────────────────────────────────────────
     const sbM = line.match(/^(.+?): posts small blind \$?([\d.]+)$/);

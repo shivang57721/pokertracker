@@ -2,19 +2,32 @@ import { STATS_META, QUALITY_STYLE } from '../lib/benchmarks'
 import { fmtPct, fmtNum, fmtInt } from '../lib/format'
 
 const STAT_KEYS = [
-  { key: 'vpip',      path: s => s.preflop.vpip,            countKey: 'vpip',       fmt: fmtPct },
-  { key: 'pfr',       path: s => s.preflop.pfr,             countKey: 'pfr',        fmt: fmtPct },
-  { key: 'three_bet', path: s => s.preflop.three_bet,       countKey: 'three_bet',  fmt: fmtPct },
-  { key: 'af',        path: s => s.aggression.overall,      countKey: null,         fmt: v => fmtNum(v, 2) },
-  { key: 'wtsd',      path: s => s.postflop.wtsd,           countKey: 'wtsd',       fmt: fmtPct },
-  { key: 'w_sd',      path: s => s.postflop.w_sd,           countKey: 'wsd_won',    fmt: fmtPct },
-  { key: 'cbet',      path: s => s.postflop.cbet,           countKey: 'cbet_done',  fmt: fmtPct },
+  { key: 'vpip',      path: s => s.preflop.vpip,       prevPath: s => s.preflop.vpip,       countKey: 'vpip',      fmt: fmtPct },
+  { key: 'pfr',       path: s => s.preflop.pfr,        prevPath: s => s.preflop.pfr,        countKey: 'pfr',       fmt: fmtPct },
+  { key: 'three_bet', path: s => s.preflop.three_bet,  prevPath: s => s.preflop.three_bet,  countKey: 'three_bet', fmt: fmtPct },
+  { key: 'af',        path: s => s.aggression.overall, prevPath: s => s.aggression.overall, countKey: null,        fmt: v => fmtNum(v, 2) },
+  { key: 'wtsd',      path: s => s.postflop.wtsd,      prevPath: s => s.postflop.wtsd,      countKey: 'wtsd',      fmt: fmtPct },
+  { key: 'w_sd',      path: s => s.postflop.w_sd,      prevPath: s => s.postflop.w_sd,      countKey: 'wsd_won',   fmt: fmtPct },
+  { key: 'cbet',      path: s => s.postflop.cbet,      prevPath: s => s.postflop.cbet,      countKey: 'cbet_done', fmt: fmtPct },
 ]
 
-function StatCard({ meta, value, count, totalHands, loading }) {
+function TrendArrow({ delta, fmt }) {
+  if (delta == null || Math.abs(delta) < 0.05) return null
+  const up = delta > 0
+  return (
+    <span className={`inline-flex items-center gap-0.5 text-xs font-semibold tabular-nums
+      ${up ? 'text-emerald-400' : 'text-red-400'}`}>
+      {up ? '▲' : '▼'}
+      <span>{fmt ? fmt(Math.abs(delta)).replace('%', '') : Math.abs(delta).toFixed(1)}</span>
+    </span>
+  )
+}
+
+function StatCard({ meta, value, count, totalHands, loading, prevValue }) {
   const q      = meta.quality(value)
   const style  = QUALITY_STYLE[q]
   const sample = count != null && totalHands ? `${fmtInt(count)} / ${fmtInt(totalHands)}` : null
+  const delta  = (value != null && prevValue != null) ? value - prevValue : null
 
   if (loading) {
     return (
@@ -28,21 +41,20 @@ function StatCard({ meta, value, count, totalHands, loading }) {
 
   return (
     <div className={`bg-gray-900 border rounded-xl p-4 flex flex-col gap-2 transition-colors hover:bg-gray-800/50 ${style.border}`}>
-      {/* Header row */}
       <div className="flex items-center justify-between gap-2">
         <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider truncate">
           {meta.label}
         </span>
-        {/* Quality indicator dot */}
         <span className={`w-2 h-2 rounded-full flex-shrink-0 ${style.dot}`} title={`${q} range`} />
       </div>
 
-      {/* Big value */}
-      <span className={`text-3xl font-bold tabular-nums leading-none ${style.value}`}>
-        {value != null ? `${meta.fmt(value)}${meta.unit}` : '—'}
-      </span>
+      <div className="flex items-end gap-2">
+        <span className={`text-3xl font-bold tabular-nums leading-none ${style.value}`}>
+          {value != null ? `${meta.fmt(value)}${meta.unit}` : '—'}
+        </span>
+        <TrendArrow delta={delta} fmt={meta.fmt} />
+      </div>
 
-      {/* Description + sample size */}
       <div className="flex flex-col gap-1 mt-auto">
         <span className="text-xs text-gray-600 leading-tight">{meta.description}</span>
         {sample && (
@@ -50,7 +62,6 @@ function StatCard({ meta, value, count, totalHands, loading }) {
         )}
       </div>
 
-      {/* Benchmark badge */}
       <span className={`self-start text-xs px-2 py-0.5 rounded-full font-medium ${style.badge}`}>
         {meta.goodRange}
       </span>
@@ -58,11 +69,10 @@ function StatCard({ meta, value, count, totalHands, loading }) {
   )
 }
 
-// Per-street aggression mini-cards
 function AfStreetBreakdown({ aggression, loading }) {
   const streets = [
-    { label: 'Flop', value: aggression?.flop },
-    { label: 'Turn', value: aggression?.turn },
+    { label: 'Flop',  value: aggression?.flop  },
+    { label: 'Turn',  value: aggression?.turn  },
     { label: 'River', value: aggression?.river },
   ]
   return (
@@ -91,22 +101,29 @@ function AfStreetBreakdown({ aggression, loading }) {
   )
 }
 
-export default function StatsGrid({ stats, loading }) {
+export default function StatsGrid({ stats, prevStats, loading }) {
   const totalHands = stats?.total_hands ?? null
 
   return (
     <div className="space-y-3">
-      <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Key Stats</h2>
+      <div className="flex items-center gap-3">
+        <h2 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Key Stats</h2>
+        {prevStats && (
+          <span className="text-xs text-gray-600">▲▼ vs prior period</span>
+        )}
+      </div>
       <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
-        {STAT_KEYS.map(({ key, path, countKey, fmt }) => {
-          const meta  = STATS_META[key]
-          const value = stats ? path(stats) : null
-          const count = countKey && stats?.counts ? stats.counts[countKey] : null
+        {STAT_KEYS.map(({ key, path, prevPath, countKey, fmt }) => {
+          const meta      = STATS_META[key]
+          const value     = stats     ? path(stats)        : null
+          const prevValue = prevStats ? prevPath(prevStats) : null
+          const count     = countKey && stats?.counts ? stats.counts[countKey] : null
           return (
             <StatCard
               key={key}
               meta={{ ...meta, fmt }}
               value={value}
+              prevValue={prevValue}
               count={count}
               totalHands={totalHands}
               loading={loading}
@@ -115,7 +132,6 @@ export default function StatsGrid({ stats, loading }) {
         })}
       </div>
 
-      {/* Street-by-street AF breakdown */}
       <div className="grid grid-cols-1">
         <AfStreetBreakdown aggression={stats?.aggression} loading={loading} />
       </div>
