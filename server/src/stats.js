@@ -496,7 +496,7 @@ async function computeProfitCurve(player, opts = {}) {
   );
 
   const cashSeries = [], tournSeries = [];
-  let cashRunning = 0, tournRunning = 0;
+  let cashRunning = 0, cashRunningBB = 0, tournRunning = 0;
 
   for (const hand of hands) {
     const net = hand.amount_won - (investedByHand[hand.hand_id] || 0);
@@ -505,7 +505,12 @@ async function computeProfitCurve(player, opts = {}) {
       tournSeries.push({ date: hand.date_played, cumulative: round2(tournRunning) });
     } else {
       cashRunning += net;
-      cashSeries.push({ date: hand.date_played, cumulative: round2(cashRunning) });
+      if (hand.big_blind > 0) cashRunningBB += net / hand.big_blind;
+      cashSeries.push({
+        date: hand.date_played,
+        cumulative:    round2(cashRunning),
+        cumulative_bb: round2(cashRunningBB),
+      });
     }
   }
 

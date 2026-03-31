@@ -5,6 +5,7 @@ import { fetchHands, fetchAvailableFilters } from '../lib/api'
 import useAutoRefresh from '../lib/useAutoRefresh'
 import { fmtUSD, fmtBB, fmtDateTime, fmtStakes } from '../lib/format'
 import useDisplayMode from '../lib/useDisplayMode'
+import { PRESETS, getPresetDates } from '../lib/datePresets'
 
 const PAGE_SIZE = 50
 
@@ -59,6 +60,7 @@ export default function HandBrowser({ hero }) {
   const [mode, setMode] = useState('cash')
 
   // Server-side filter/sort/page state
+  const [datePreset, setDatePreset] = useState('all_time')
   const [from,     setFrom]     = useState('')
   const [to,       setTo]       = useState('')
   const [stakes,   setStakes]   = useState('')
@@ -115,8 +117,17 @@ export default function HandBrowser({ hero }) {
   const resetPage = () => setPage(1)
 
   const handleSort = col => {
-    if (col === sortBy) setSortDir(d => d === 'asc' ? 'desc' : 'asc')
-    else { setSortBy(col); setSortDir('desc') }
+    if (col === 'net_profit') {
+      // Cycle: net_profit desc → net_profit asc → abs_net_profit desc → abs_net_profit asc → repeat
+      if (sortBy === 'net_profit' && sortDir === 'desc') { setSortDir('asc') }
+      else if (sortBy === 'net_profit' && sortDir === 'asc') { setSortBy('abs_net_profit'); setSortDir('desc') }
+      else if (sortBy === 'abs_net_profit' && sortDir === 'desc') { setSortDir('asc') }
+      else if (sortBy === 'abs_net_profit' && sortDir === 'asc') { setSortBy('net_profit'); setSortDir('desc') }
+      else { setSortBy('net_profit'); setSortDir('desc') }
+    } else {
+      if (col === sortBy) setSortDir(d => d === 'asc' ? 'desc' : 'asc')
+      else { setSortBy(col); setSortDir('desc') }
+    }
     resetPage()
   }
 
@@ -133,9 +144,18 @@ export default function HandBrowser({ hero }) {
     setPage(1)
   }
 
+  const handlePresetChange = id => {
+    setDatePreset(id)
+    if (id !== 'custom') {
+      const { from: f, to: t } = getPresetDates(id)
+      setFrom(f); setTo(t)
+    }
+    resetPage()
+  }
+
   const resetAll = () => {
     setFrom(''); setTo(''); setStakes(''); setGameType('')
-    setMinNet(''); setMaxNet(''); setPage(1)
+    setMinNet(''); setMaxNet(''); setPage(1); setDatePreset('all_time')
   }
 
   return (
@@ -184,14 +204,38 @@ export default function HandBrowser({ hero }) {
           <div className="w-px h-6 bg-gray-700" />
 
 
-          {/* Date range */}
-          <input type="date" value={from} onChange={e => { setFrom(e.target.value); resetPage() }}
-            className="[color-scheme:dark] bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5
-                       text-gray-200 focus:outline-none focus:border-gray-500 focus:ring-1 focus:ring-gray-500 w-36" />
-          <span className="text-gray-600 text-xs">to</span>
-          <input type="date" value={to} onChange={e => { setTo(e.target.value); resetPage() }}
-            className="[color-scheme:dark] bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5
-                       text-gray-200 focus:outline-none focus:border-gray-500 focus:ring-1 focus:ring-gray-500 w-36" />
+          {/* Date preset chips */}
+          <div className="flex items-center gap-1 flex-wrap">
+            {PRESETS.map(p => (
+              <button
+                key={p.id}
+                onClick={() => handlePresetChange(p.id)}
+                className={`px-3 py-1 rounded-full text-xs font-medium transition-colors border
+                  ${datePreset === p.id
+                    ? 'bg-emerald-600 border-emerald-500 text-white'
+                    : 'bg-gray-800 border-gray-700 text-gray-400 hover:text-gray-200 hover:border-gray-600'}`}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Custom date pickers */}
+          {datePreset === 'custom' && (
+            <div className="flex items-center gap-1">
+              <input type="date" value={from}
+                onChange={e => { setFrom(e.target.value); setDatePreset('custom'); resetPage() }}
+                className="[color-scheme:dark] bg-gray-800 border border-gray-700 rounded-lg px-2 py-1
+                           text-gray-200 focus:outline-none focus:border-gray-500 focus:ring-1 focus:ring-gray-500 text-xs"
+                style={{ width: '8.5rem' }} />
+              <span className="text-gray-500 text-xs">–</span>
+              <input type="date" value={to}
+                onChange={e => { setTo(e.target.value); setDatePreset('custom'); resetPage() }}
+                className="[color-scheme:dark] bg-gray-800 border border-gray-700 rounded-lg px-2 py-1
+                           text-gray-200 focus:outline-none focus:border-gray-500 focus:ring-1 focus:ring-gray-500 text-xs"
+                style={{ width: '8.5rem' }} />
+            </div>
+          )}
 
           <div className="w-px h-5 bg-gray-700" />
 
@@ -258,7 +302,19 @@ export default function HandBrowser({ hero }) {
                 <SortTh label="Pos"    col="player_position" sortBy={sortBy} sortDir={sortDir} onSort={handleSort} />
                 <th className="py-2 px-3 font-medium text-gray-600">Cards</th>
                 <th className="py-2 px-3 font-medium text-gray-600">Board</th>
-                <SortTh label="Result" col="net_profit"      sortBy={sortBy} sortDir={sortDir} onSort={handleSort} className="pr-4" />
+                <th
+                  className={`py-2 px-3 pr-4 font-medium cursor-pointer select-none whitespace-nowrap
+                    hover:text-gray-300 transition-colors
+                    ${sortBy === 'net_profit' || sortBy === 'abs_net_profit' ? 'text-gray-200' : 'text-gray-600'}`}
+                  onClick={() => handleSort('net_profit')}
+                >
+                  {sortBy === 'abs_net_profit' ? '|Result|' : 'Result'}
+                  <span className="ml-1 text-gray-600">
+                    {sortBy === 'net_profit' || sortBy === 'abs_net_profit'
+                      ? (sortDir === 'asc' ? '↑' : '↓')
+                      : '↕'}
+                  </span>
+                </th>
               </tr>
             </thead>
             <tbody>

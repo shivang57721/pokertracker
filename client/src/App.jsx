@@ -34,8 +34,10 @@ const NAV_TABS = [
 ]
 
 // ── Date preset helpers ────────────────────────────────────────────────────
+const fmtLocal = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+
 function getPresetDates(preset) {
-  const fmt   = d => d.toISOString().slice(0, 10)
+  const fmt   = fmtLocal
   const fmtTo = d => fmt(d) + ' 23:59:59'
   const today = new Date()
   switch (preset) {
@@ -65,7 +67,7 @@ function getPresetDates(preset) {
 }
 
 function getPrevPeriodDates(preset) {
-  const fmt   = d => d.toISOString().slice(0, 10)
+  const fmt   = fmtLocal
   const fmtTo = d => fmt(d) + ' 23:59:59'
   switch (preset) {
     case 'today': {

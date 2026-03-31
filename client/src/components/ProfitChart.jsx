@@ -14,10 +14,10 @@ function downsample(data, maxPoints = 500) {
 }
 
 // Trailing 100-hand moving average of per-hand deltas, re-accumulated
-function computeMA(display) {
-  if (display.length < 2) return display.map(d => ({ ...d, ma: d.cumulative }))
+function computeMA(display, key = 'cumulative') {
+  if (display.length < 2) return display.map(d => ({ ...d, ma: d[key] }))
   const deltas = display.map((d, i) =>
-    i === 0 ? d.cumulative : d.cumulative - display[i - 1].cumulative
+    i === 0 ? d[key] : d[key] - display[i - 1][key]
   )
   let running = 0
   return display.map((d, i) => {
@@ -29,26 +29,34 @@ function computeMA(display) {
   })
 }
 
+function fmtBB(n) {
+  if (n == null) return '—'
+  const rounded = Math.round(n * 10) / 10
+  return (rounded > 0 ? '+' : '') + rounded.toLocaleString() + ' BB'
+}
+
 function fmtChips(n) {
   if (n == null) return '—'
   const rounded = Math.round(n)
   return (rounded > 0 ? '+' : '') + rounded.toLocaleString()
 }
 
-function CashTooltip({ active, payload }) {
+function CashTooltip({ active, payload, isBB }) {
   if (!active || !payload?.length) return null
-  const d   = payload[0]?.payload
-  const val = d?.cumulative
-  const ma  = d?.ma
+  const d    = payload[0]?.payload
+  const val  = isBB ? d?.cumulative_bb : d?.cumulative
+  const ma   = d?.ma
+  const fmt  = isBB ? fmtBB : fmtUSD
+  const maFmt = isBB ? fmtBB : fmtUSD
   return (
     <div className="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 shadow-xl text-sm">
       <p className="text-gray-400 text-xs mb-1">{d?.label}</p>
       <p className={`font-bold tabular-nums ${val >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-        {fmtUSD(val)}
+        {fmt(val)}
       </p>
       {ma != null && (
         <p className="text-orange-400 text-xs tabular-nums mt-0.5">
-          100h avg: {fmtUSD(ma)}
+          100h avg: {maFmt(ma)}
         </p>
       )}
     </div>
@@ -71,7 +79,9 @@ function TournTooltip({ active, payload }) {
 
 export default function ProfitChart({ data = [], loading, mode = 'cash' }) {
   const [brushRange, setBrushRange] = useState(null)
+  const [isBB, setIsBB] = useState(false)
   const isTournament = mode === 'tournament'
+  const maKey = isBB ? 'cumulative_bb' : 'cumulative'
 
   const display = useMemo(() => {
     setBrushRange(null)
@@ -80,8 +90,8 @@ export default function ProfitChart({ data = [], loading, mode = 'cash' }) {
       idx:   i,
       label: fmtDateShort(d.date),
     }))
-    return isTournament ? sampled : computeMA(sampled)
-  }, [data, isTournament])
+    return isTournament ? sampled : computeMA(sampled, maKey)
+  }, [data, isTournament, maKey])
 
   // Pick up to 8 evenly-spaced tick indices, no duplicates
   const xTicks = useMemo(() => {
@@ -98,19 +108,22 @@ export default function ProfitChart({ data = [], loading, mode = 'cash' }) {
   const tickFormatter = useCallback(idx => display[idx]?.label ?? '', [display])
 
   const isZoomed  = brushRange !== null
-  const values    = display.map(d => d.cumulative)
+  const valueKey  = (!isTournament && isBB) ? 'cumulative_bb' : 'cumulative'
+  const values    = display.map(d => d[valueKey])
   const minVal    = values.length ? Math.min(...values) : -1
   const maxVal    = values.length ? Math.max(...values) :  1
   const pad       = Math.max(Math.abs(maxVal - minVal) * 0.1, isTournament ? 1 : 0.05)
   const yDomain   = [minVal - pad, maxVal + pad]
 
-  const finalVal   = display.at(-1)?.cumulative
+  const finalVal   = display.at(-1)?.[valueKey]
   const isProfit   = finalVal >= 0
   const lineColor  = isProfit ? '#34d399' : '#f87171'
 
   const borderCls  = isTournament ? 'border-yellow-900/40' : 'border-gray-800'
-  const title      = isTournament ? 'Tournament Chip Delta' : 'Cash Profit'
-  const finalLabel = isTournament ? `${fmtChips(finalVal)} chips` : fmtUSD(finalVal)
+  const title      = isTournament ? 'Tournament Chip Delta' : (isBB ? 'Cash Profit (BB)' : 'Cash Profit')
+  const finalLabel = isTournament
+    ? `${fmtChips(finalVal)} chips`
+    : (isBB ? fmtBB(finalVal) : fmtUSD(finalVal))
 
   if (loading) {
     return (
@@ -147,6 +160,24 @@ export default function ProfitChart({ data = [], loading, mode = 'cash' }) {
           )}
         </div>
         <div className="flex items-center gap-3 text-xs">
+          {!isTournament && (
+            <div className="flex rounded-lg border border-gray-700 overflow-hidden">
+              <button
+                onClick={() => setIsBB(false)}
+                className={`px-2.5 py-1 text-xs font-medium transition-colors
+                  ${!isBB ? 'bg-gray-700 text-white' : 'bg-gray-900 text-gray-400 hover:text-gray-200'}`}
+              >
+                $
+              </button>
+              <button
+                onClick={() => setIsBB(true)}
+                className={`px-2.5 py-1 text-xs font-medium transition-colors
+                  ${isBB ? 'bg-gray-700 text-white' : 'bg-gray-900 text-gray-400 hover:text-gray-200'}`}
+              >
+                BB
+              </button>
+            </div>
+          )}
           {isZoomed && (
             <button
               onClick={() => setBrushRange(null)}
@@ -181,12 +212,14 @@ export default function ProfitChart({ data = [], loading, mode = 'cash' }) {
             tickLine={false}
             tickFormatter={isTournament
               ? v => v >= 1000 ? `${(v / 1000).toFixed(1)}k` : String(Math.round(v))
-              : v => `$${v.toFixed(2)}`
+              : isBB
+                ? v => `${Math.round(v)}BB`
+                : v => `$${v.toFixed(2)}`
             }
-            width={isTournament ? 44 : 56}
+            width={isTournament ? 44 : isBB ? 52 : 56}
           />
 
-          <Tooltip content={isTournament ? <TournTooltip /> : <CashTooltip />} />
+          <Tooltip content={isTournament ? <TournTooltip /> : <CashTooltip isBB={isBB} />} />
 
           <ReferenceLine y={0} stroke="#374151" strokeDasharray="4 4" strokeWidth={1} />
 
@@ -207,7 +240,7 @@ export default function ProfitChart({ data = [], loading, mode = 'cash' }) {
           {/* Main cumulative profit line */}
           <Line
             type="monotone"
-            dataKey="cumulative"
+            dataKey={valueKey}
             stroke={lineColor}
             strokeWidth={2}
             dot={false}
@@ -228,7 +261,7 @@ export default function ProfitChart({ data = [], loading, mode = 'cash' }) {
             }}
           >
             <LineChart>
-              <Line type="monotone" dataKey="cumulative" stroke="#374151" dot={false} strokeWidth={1} />
+              <Line type="monotone" dataKey={valueKey} stroke="#374151" dot={false} strokeWidth={1} />
             </LineChart>
           </Brush>
         </LineChart>

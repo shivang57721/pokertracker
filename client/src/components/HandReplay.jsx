@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import HoleCards from './HoleCards'
 import { fmtUSD, fmtBB, fmtDateTime, fmtStakes } from '../lib/format'
 import { fetchAiAnalysis, runAiAnalysis } from '../lib/api'
-import { annotateActions, boardForStreet, buildAnalysisPrompt } from '../lib/handUtils'
+import { annotateActions, boardForStreet, buildAnalysisPrompt, estimateEquity } from '../lib/handUtils'
 import useDisplayMode from '../lib/useDisplayMode'
 
 const STREET_LABEL = { preflop: 'Preflop', flop: 'Flop', turn: 'Turn', river: 'River', showdown: 'Showdown' }
@@ -19,21 +19,31 @@ const ACTION_LABEL = {
   raise:     'raises to',
 }
 
+const POS_SHORT = {
+  'button':      'BTN',
+  'small blind': 'SB',
+  'big blind':   'BB',
+  'utg':         'UTG',
+  'utg+1':       'UTG+1',
+  'mp':          'MP',
+  'lj':          'LJ',
+  'hj':          'HJ',
+  'co':          'CO',
+}
 
-function ActionLine({ action, hero, bigBlind, isBB }) {
-  const isHero = action.player === hero
-  const label  = ACTION_LABEL[action.action] ?? action.action
-  const fmt    = (n) => isBB && bigBlind ? fmtBB(n, bigBlind) : fmtUSD(n).replace('+', '')
+function ActionLine({ action, hero, pos, bigBlind, isBB, annotation }) {
+  const isHero   = action.player === hero
+  const label    = ACTION_LABEL[action.action] ?? action.action
+  const fmt      = (n) => isBB && bigBlind ? fmtBB(n, bigBlind) : fmtUSD(n).replace('+', '')
+  const posShort = pos ? (POS_SHORT[pos] || pos.toUpperCase()) : null
 
-  // Amount to show alongside the label
   let amtStr = ''
   if (action.action === 'raise' && action.total_amount != null) {
     amtStr = fmt(action.total_amount)
-  } else if (action.amount != null) {
+  } else if (action.amount != null && action.amount > 0) {
     amtStr = fmt(action.amount)
   }
 
-  // Colour by action type
   const actionColor =
     action.action === 'fold'    ? 'text-gray-500' :
     action.action === 'check'   ? 'text-gray-400' :
@@ -46,65 +56,174 @@ function ActionLine({ action, hero, bigBlind, isBB }) {
     'text-gray-300'
 
   return (
-    <div className={`flex items-baseline gap-2 py-0.5 px-2 rounded
-      ${isHero ? 'bg-emerald-900/20' : ''}`}>
-      {/* Player name */}
-      <span className={`text-xs font-medium shrink-0 w-36 truncate
-        ${isHero ? 'text-emerald-300' : 'text-gray-300'}`}>
-        {action.player}{isHero ? ' ★' : ''}
-      </span>
-
-      {/* Action */}
-      <span className={`text-xs font-semibold ${actionColor}`}>
-        {label}
-        {amtStr ? ` ${amtStr}` : ''}
-        {action.is_all_in ? ' · all-in' : ''}
-      </span>
-
-      {/* Pot before this action */}
-      <span className="ml-auto text-xs text-gray-700 tabular-nums shrink-0">
-        pot {fmt(action.potBefore)}
-      </span>
+    <div>
+      <div className={`flex items-baseline gap-1.5 py-0.5 px-2 rounded
+        ${isHero ? 'bg-emerald-900/20' : ''}`}>
+        {/* Position tag */}
+        <span className={`text-xs font-mono shrink-0 w-14 text-right
+          ${isHero ? 'text-emerald-700' : 'text-gray-600'}`}>
+          {posShort ? `[${posShort}]` : ''}
+        </span>
+        {/* Player name */}
+        <span className={`text-xs font-medium shrink-0 w-32 truncate
+          ${isHero ? 'text-emerald-300' : 'text-gray-300'}`}>
+          {action.player}{isHero ? ' ★' : ''}
+        </span>
+        {/* Action + amount */}
+        <span className={`text-xs font-semibold ${actionColor}`}>
+          {label}{amtStr ? ` ${amtStr}` : ''}{action.is_all_in ? ' · all-in' : ''}
+        </span>
+        {/* Pot after */}
+        <span className="text-xs text-gray-600 tabular-nums">
+          · pot {fmt(action.potAfter)}
+        </span>
+      </div>
+      {/* Decision annotation */}
+      {annotation && (
+        <div className={`mx-2 mt-0.5 mb-1.5 px-3 py-2 rounded-lg text-xs border
+          ${annotation.good
+            ? 'bg-emerald-950/50 border-emerald-800/50'
+            : 'bg-red-950/50 border-red-800/50'}`}>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <span className={annotation.good ? 'text-emerald-400' : 'text-red-400'}>
+              Pot odds: {Math.round(annotation.potOdds * 100)}%
+              <span className="text-gray-500 font-normal ml-1">
+                (need {Math.round(annotation.potOdds * 100)}% equity to break even)
+              </span>
+            </span>
+            {annotation.betPct != null && (
+              <span className="text-gray-500">Bet: {Math.round(annotation.betPct)}% pot</span>
+            )}
+          </div>
+          {annotation.eqResult && (
+            <div className={`mt-1 ${annotation.good ? 'text-emerald-300' : 'text-red-300'}`}>
+              Est. equity: {Math.round(annotation.eqResult.equity * 100)}% — {annotation.eqResult.label}
+              {annotation.verdict && (
+                <span className={`ml-1.5 font-semibold ${annotation.good ? 'text-emerald-400' : 'text-red-400'}`}>
+                  {annotation.verdict}
+                </span>
+              )}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }
 
-function StreetSection({ street, actions, board, hero, bigBlind, isBB }) {
-  const newCards = boardForStreet(board, street)
-  const prevCards = street === 'turn'  ? board.slice(0, 3) :
-                    street === 'river' ? board.slice(0, 4) : []
-  // Cards newly added this street
+function StreetSection({ street, actions, board, hero, holeCards, posMap, heroStack, bigBlind, isBB, hand }) {
+  const newCards   = boardForStreet(board, street)
+  const prevCards  = street === 'turn'  ? board.slice(0, 3) :
+                     street === 'river' ? board.slice(0, 4) : []
   const addedCards = newCards.slice(prevCards.length)
 
   if (actions.length === 0 && addedCards.length === 0) return null
 
+  const fmt            = (n) => isBB && bigBlind ? fmtBB(n, bigBlind) : fmtUSD(n).replace('+', '')
+  const streetPot      = actions.length > 0 ? actions[0].potBefore : null
+  const spr            = streetPot > 0 && heroStack != null ? heroStack / streetPot : null
+  const showStreetInfo = ['flop', 'turn', 'river'].includes(street) && streetPot != null
+  const boardAtStreet  = boardForStreet(board, street)
+
+  // Compute decision annotations for hero's actions (same logic as HandReview)
+  let lastAggressor    = null
+  let heroStreetCommit = 0
+  const annotations    = {}
+
+  for (let i = 0; i < actions.length; i++) {
+    const a       = actions[i]
+    const isHero  = a.player === hero
+    const capturedAggressor  = lastAggressor
+    const capturedHeroCommit = heroStreetCommit
+
+    if (a.action === 'bet' || a.action === 'raise') lastAggressor = a
+    if (isHero && a.delta > 0) heroStreetCommit += a.delta
+
+    if (
+      isHero &&
+      holeCards?.length > 0 &&
+      (a.action === 'call' || a.action === 'fold') &&
+      ['flop', 'turn', 'river'].includes(street) &&
+      capturedAggressor != null
+    ) {
+      const raiseTo    = capturedAggressor.action === 'raise' && capturedAggressor.total_amount != null
+        ? capturedAggressor.total_amount : null
+      const callAmount = a.action === 'call'
+        ? a.delta
+        : raiseTo != null ? raiseTo - capturedHeroCommit : capturedAggressor.delta
+
+      if (callAmount > 0 && a.potBefore > 0) {
+        const potOdds  = callAmount / (a.potBefore + callAmount)
+        const eqResult = estimateEquity(holeCards, boardAtStreet)
+        const betPct   = capturedAggressor.potBefore > 0
+          ? (capturedAggressor.delta / capturedAggressor.potBefore) * 100 : null
+
+        const calledGood = a.action === 'call' && eqResult?.equity >  potOdds
+        const calledBad  = a.action === 'call' && eqResult?.equity <= potOdds
+        const foldedGood = a.action === 'fold' && eqResult?.equity <= potOdds
+        const foldedBad  = a.action === 'fold' && eqResult?.equity >  potOdds
+        const good = calledGood || foldedGood
+
+        annotations[i] = {
+          potOdds, eqResult, betPct, good,
+          verdict: calledGood ? '→ +EV call'
+            : calledBad  ? '→ -EV call'
+            : foldedBad  ? '→ should have called'
+            : foldedGood ? '→ correct fold'
+            : null,
+        }
+      }
+    }
+  }
+
   return (
     <div>
       {/* Street header */}
-      <div className="flex items-center gap-3 py-2 mt-3">
-        <span className="text-xs font-bold text-gray-500 uppercase tracking-widest w-16 shrink-0">
+      <div className="flex items-start gap-3 py-2 mt-3">
+        <span className="text-xs font-bold text-gray-500 uppercase tracking-widest w-16 shrink-0 pt-0.5">
           {STREET_LABEL[street]}
         </span>
-        {addedCards.length > 0 && (
-          <div className="flex items-center gap-1">
-            {prevCards.length > 0 && (
-              <>
-                <HoleCards cards={prevCards} size="sm" />
-                <span className="text-gray-700 text-xs mx-1">+</span>
-              </>
-            )}
-            <HoleCards cards={addedCards} size="sm" />
-          </div>
-        )}
-        {street === 'preflop' && (
-          <span className="text-xs text-gray-700">Hole cards dealt</span>
-        )}
+        <div className="flex flex-col gap-1.5 flex-1">
+          {addedCards.length > 0 && (
+            <div className="flex items-center gap-1">
+              {prevCards.length > 0 && (
+                <>
+                  <HoleCards cards={prevCards} size="sm" />
+                  <span className="text-gray-700 text-xs mx-0.5">+</span>
+                </>
+              )}
+              <HoleCards cards={addedCards} size="sm" />
+            </div>
+          )}
+          {street === 'preflop' && actions.length > 0 && (
+            <span className="text-xs text-gray-700">Hole cards dealt</span>
+          )}
+          {showStreetInfo && (
+            <div className="flex items-center gap-2 text-xs flex-wrap">
+              <span className="text-gray-500">Pot <span className="text-gray-200 font-semibold ml-1">{fmt(streetPot)}</span></span>
+              <span className="text-gray-700">·</span>
+              <span className="text-gray-500">Hero stack <span className="text-gray-200 font-semibold ml-1">{fmt(heroStack)}</span></span>
+              <span className="text-gray-700">·</span>
+              <span className="text-gray-500">SPR <span className={`font-bold ml-1 ${
+                spr < 2 ? 'text-red-400' : spr < 5 ? 'text-yellow-400' : 'text-emerald-400'
+              }`}>{spr?.toFixed(1)}</span></span>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Actions */}
-      <div className="space-y-0.5">
+      <div className="space-y-0.5 ml-1">
         {actions.map((a, i) => (
-          <ActionLine key={i} action={a} hero={hero} bigBlind={bigBlind} isBB={isBB} />
+          <ActionLine
+            key={i}
+            action={a}
+            hero={hero}
+            pos={posMap?.[a.player]}
+            bigBlind={bigBlind}
+            isBB={isBB}
+            annotation={annotations[i]}
+          />
         ))}
       </div>
     </div>
@@ -123,7 +242,9 @@ export default function HandReplay({ handId, hero, onClose }) {
   const [aiRunning,   setAiRunning]   = useState(false)
   const [aiError,     setAiError]     = useState(null)
   const [copied,      setCopied]      = useState(false)
-  const copyTimerRef = useRef(null)
+  const [copyToast,   setCopyToast]   = useState(false)
+  const copyTimerRef  = useRef(null)
+  const toastTimerRef = useRef(null)
 
   useEffect(() => {
     if (!handId) return
@@ -175,15 +296,29 @@ export default function HandReplay({ handId, hero, onClose }) {
     })
   }, [hand, hero])
 
-  // Clear copy timer on unmount
-  useEffect(() => () => clearTimeout(copyTimerRef.current), [])
+  // Clear timers on unmount
+  useEffect(() => () => { clearTimeout(copyTimerRef.current); clearTimeout(toastTimerRef.current) }, [])
 
-  // Close on Escape
+  // Keyboard shortcuts
   useEffect(() => {
-    const handler = e => { if (e.key === 'Escape') onClose() }
+    const handler = e => {
+      if (e.key === 'Escape') { onClose(); return }
+      if ((e.ctrlKey || e.metaKey) && e.key === 'c' && !window.getSelection()?.toString()) {
+        if (!hand?.raw_text) return
+        e.preventDefault()
+        navigator.clipboard.writeText(fallbackPrompt).then(() => {
+          setCopied(true)
+          clearTimeout(copyTimerRef.current)
+          copyTimerRef.current = setTimeout(() => setCopied(false), 2000)
+          setCopyToast(true)
+          clearTimeout(toastTimerRef.current)
+          toastTimerRef.current = setTimeout(() => setCopyToast(false), 1500)
+        })
+      }
+    }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [onClose])
+  }, [onClose, hand, fallbackPrompt])
 
   const bigBlind   = hand?.big_blind ?? null
   const fmt        = (n, sign = false) => isBB && bigBlind ? fmtBB(n, bigBlind, sign) : (sign ? fmtUSD(n) : fmtUSD(n).replace('+', ''))
@@ -195,6 +330,23 @@ export default function HandReplay({ handId, hero, onClose }) {
   for (const a of annotated) {
     if (!byStreet[a.street]) byStreet[a.street] = []
     byStreet[a.street].push(a)
+  }
+
+  // Position map: player → position string
+  const posMap = {}
+  for (const p of (hand?.players || [])) {
+    if (p.position) posMap[p.player] = p.position.toLowerCase()
+  }
+
+  // Hero remaining stack at start of each street
+  const heroStart   = heroPlayer?.starting_chips ?? 0
+  let   cumInvested = 0
+  const heroStackAt = {}
+  for (const street of STREET_ORDER) {
+    heroStackAt[street] = heroStart - cumInvested
+    for (const a of (byStreet[street] || [])) {
+      if (a.player === hero && a.delta > 0) cumInvested += a.delta
+    }
   }
 
   const finalPot = annotated.length ? annotated.at(-1).potAfter : null
@@ -211,6 +363,13 @@ export default function HandReplay({ handId, hero, onClose }) {
                    overflow-y-auto shadow-2xl flex flex-col"
         onClick={e => e.stopPropagation()}
       >
+        {/* Copy toast */}
+        {copyToast && (
+          <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[60] bg-gray-800 border border-gray-600
+                          text-gray-200 text-xs font-medium px-4 py-2 rounded-full shadow-lg pointer-events-none">
+            Prompt copied to clipboard
+          </div>
+        )}
         {/* Header */}
         <div className="sticky top-0 bg-gray-950/95 backdrop-blur border-b border-gray-800 px-4 py-3 flex items-start justify-between gap-4">
           <div className="min-w-0">
@@ -310,8 +469,12 @@ export default function HandReplay({ handId, hero, onClose }) {
                     actions={byStreet[street] || []}
                     board={hand.board}
                     hero={hero}
+                    holeCards={heroPlayer?.hole_cards}
+                    posMap={posMap}
+                    heroStack={heroStackAt[street]}
                     bigBlind={bigBlind}
                     isBB={isBB}
+                    hand={hand}
                   />
                 ) : null
               ))}

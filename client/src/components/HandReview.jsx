@@ -4,6 +4,7 @@ import { fmtUSD, fmtBB, fmtInt, fmtStakes, fmtDateTime } from '../lib/format'
 import useDisplayMode from '../lib/useDisplayMode'
 import { fetchReviewSummary, fetchReviewHands, markReviewed, markUnreviewed, runAiAnalysis } from '../lib/api'
 import { annotateActions, boardForStreet, buildAnalysisPrompt, FLAG_LABELS, estimateEquity, describeHand } from '../lib/handUtils'
+import { PRESETS, getPresetDates } from '../lib/datePresets'
 
 const STREET_ORDER = ['preflop', 'flop', 'turn', 'river', 'showdown']
 const STREET_LABEL = { preflop: 'Preflop', flop: 'Flop', turn: 'Turn', river: 'River', showdown: 'Showdown' }
@@ -13,18 +14,6 @@ const ACTION_LABEL = {
   fold: 'folds', check: 'checks', call: 'calls', bet: 'bets', raise: 'raises to',
 }
 
-const SEV_COLORS = {
-  1: { bg: 'bg-yellow-900/40', text: 'text-yellow-400', border: 'border-yellow-800/40' },
-  2: { bg: 'bg-orange-900/40', text: 'text-orange-400', border: 'border-orange-800/40' },
-  3: { bg: 'bg-red-900/40',    text: 'text-red-400',    border: 'border-red-800/40'    },
-}
-
-// Banner styles keyed by max severity (for the full-width flag section)
-const SEV_BANNER = {
-  1: { bg: 'bg-yellow-950/70', border: 'border-yellow-800/50', heading: 'text-yellow-300' },
-  2: { bg: 'bg-orange-950/70', border: 'border-orange-800/50', heading: 'text-orange-300' },
-  3: { bg: 'bg-red-950/70',    border: 'border-red-800/60',    heading: 'text-red-300'    },
-}
 
 const ALL_FLAG_TYPES = Object.keys(FLAG_LABELS)
 
@@ -446,8 +435,6 @@ function HandDetailModal({ hand, selectedIndex, totalHands, onClose, onNext, onP
     })
   }
 
-  const maxSev   = hand.max_severity ?? hand.flags?.[0]?.severity ?? 1
-  const banner   = SEV_BANNER[maxSev] || SEV_BANNER[1]
   const hasPrev  = selectedIndex > 0
   const hasNext  = selectedIndex < totalHands - 1
 
@@ -539,6 +526,7 @@ function HandDetailModal({ hand, selectedIndex, totalHands, onClose, onNext, onP
               >$</button>
             </div>
 
+
             {/* Close */}
             <button
               onClick={onClose}
@@ -557,18 +545,12 @@ function HandDetailModal({ hand, selectedIndex, totalHands, onClose, onNext, onP
 
         {/* ── Flag banner ── */}
         {hand.flags?.length > 0 && (
-          <div className={`${banner.bg} border-b ${banner.border} px-5 py-4 shrink-0`}>
+          <div className="bg-amber-950/50 border-b border-amber-800/40 px-5 py-4 shrink-0">
             <div className="space-y-2.5">
-              {hand.flags.map((f, i) => {
-                const sc = SEV_COLORS[f.severity] || SEV_COLORS[1]
-                return (
+              {hand.flags.map((f, i) => (
                   <div key={i} className="flex items-start gap-3">
-                    <span className={`text-xs font-bold px-1.5 py-0.5 rounded border shrink-0 mt-0.5
-                      ${sc.bg} ${sc.text} ${sc.border}`}>
-                      S{f.severity}
-                    </span>
                     <div>
-                      <span className={`text-sm font-semibold ${banner.heading}`}>
+                      <span className="text-sm font-semibold text-amber-300">
                         {FLAG_LABELS[f.flag_type] ?? f.flag_type}
                       </span>
                       {f.street && (
@@ -579,8 +561,7 @@ function HandDetailModal({ hand, selectedIndex, totalHands, onClose, onNext, onP
                       )}
                     </div>
                   </div>
-                )
-              })}
+              ))}
             </div>
           </div>
         )}
@@ -766,8 +747,6 @@ function HandDetailModal({ hand, selectedIndex, totalHands, onClose, onNext, onP
 
 // ── Compact review card (click to open modal) ─────────────────────────────────
 function ReviewCard({ hand, hero, index, onSelect, isBB }) {
-  const maxSev     = hand.max_severity ?? hand.flags?.[0]?.severity ?? 1
-  const sevColor   = SEV_COLORS[maxSev] || SEV_COLORS[1]
   const isReviewed = !!hand.is_reviewed
 
   const netProfit = hand.net_profit ?? 0
@@ -779,18 +758,12 @@ function ReviewCard({ hand, hero, index, onSelect, isBB }) {
       className={`border rounded-xl cursor-pointer transition-all hover:brightness-110
         ${isReviewed
           ? 'border-gray-800 bg-gray-900/20 opacity-50 hover:opacity-80'
-          : `${sevColor.border} bg-gray-900/50 hover:bg-gray-900/80`}`}
+          : 'border-amber-800/40 bg-gray-900/50 hover:bg-gray-900/80'}`}
     >
       <div className="flex items-center gap-3 px-4 py-3">
-        {/* Severity badge or reviewed checkmark */}
-        {isReviewed ? (
+        {isReviewed && (
           <span className="text-xs font-bold px-2 py-0.5 rounded border bg-gray-800 text-gray-500 border-gray-700 shrink-0">
             ✓
-          </span>
-        ) : (
-          <span className={`text-xs font-bold px-2 py-0.5 rounded border shrink-0
-            ${sevColor.bg} ${sevColor.text} ${sevColor.border}`}>
-            S{maxSev}
           </span>
         )}
 
@@ -804,7 +777,7 @@ function ReviewCard({ hand, hero, index, onSelect, isBB }) {
           <span className="text-xs text-gray-500 capitalize shrink-0">{hand.hero_position}</span>
         )}
         <span className={`text-xs font-medium truncate
-          ${isReviewed ? 'text-gray-600' : sevColor.text}`}>
+          ${isReviewed ? 'text-gray-600' : 'text-amber-400'}`}>
           {FLAG_LABELS[hand.flags?.[0]?.flag_type] ?? hand.flags?.[0]?.flag_type ?? ''}
           {hand.flags?.length > 1 && (
             <span className="ml-1 text-gray-600">+{hand.flags.length - 1}</span>
@@ -836,6 +809,9 @@ export default function HandReview({ hero }) {
 
   const [reviewedFilter, setReviewedFilter] = useState('unreviewed')
   const [flagFilter,     setFlagFilter]     = useState('')
+  const [datePreset,     setDatePreset]     = useState('all_time')
+  const [from,           setFrom]           = useState('')
+  const [to,             setTo]             = useState('')
   const [page,           setPage]           = useState(0)
   const [selectedIndex,  setSelectedIndex]  = useState(null) // null = modal closed
   const PAGE_SIZE = 20
@@ -856,15 +832,22 @@ export default function HandReview({ hero }) {
     setError(null)
     const params = { limit: PAGE_SIZE, offset: page * PAGE_SIZE, reviewed: reviewedFilter }
     if (flagFilter) params.flag_type = flagFilter
+    if (from) params.from = from
+    if (to)   params.to   = to
     fetchReviewHands(params)
       .then(d => { setHands(d.hands); setTotal(d.total); setHandsLoading(false) })
       .catch(e => { setError(e.message); setHandsLoading(false) })
-  }, [reviewedFilter, flagFilter, page])
+  }, [reviewedFilter, flagFilter, page, from, to])
 
   useEffect(() => { loadHands() }, [loadHands])
 
   const handleReviewedFilter = val => { setReviewedFilter(val); setPage(0); setSelectedIndex(null) }
   const handleFlagFilter     = val => { setFlagFilter(val);     setPage(0); setSelectedIndex(null) }
+  const handlePresetChange   = id  => {
+    setDatePreset(id)
+    if (id !== 'custom') { const { from: f, to: t } = getPresetDates(id); setFrom(f); setTo(t) }
+    setPage(0); setSelectedIndex(null)
+  }
 
   // Navigation
   const handleSelect  = useCallback(idx => setSelectedIndex(idx), [])
@@ -947,6 +930,37 @@ export default function HandReview({ hero }) {
             )}
           </button>
         ))}
+      </div>
+
+      {/* Date filter */}
+      <div className="flex items-center gap-2 flex-wrap">
+        {PRESETS.map(p => (
+          <button
+            key={p.id}
+            onClick={() => handlePresetChange(p.id)}
+            className={`px-3 py-1 rounded-full text-xs font-medium transition-colors border
+              ${datePreset === p.id
+                ? 'bg-emerald-600 border-emerald-500 text-white'
+                : 'bg-gray-800 border-gray-700 text-gray-400 hover:text-gray-200 hover:border-gray-600'}`}
+          >
+            {p.label}
+          </button>
+        ))}
+        {datePreset === 'custom' && (
+          <div className="flex items-center gap-1">
+            <input type="date" value={from}
+              onChange={e => { setFrom(e.target.value); setDatePreset('custom'); setPage(0) }}
+              className="[color-scheme:dark] bg-gray-800 border border-gray-700 rounded-lg px-2 py-1
+                         text-gray-200 focus:outline-none focus:border-gray-500 text-xs"
+              style={{ width: '8.5rem' }} />
+            <span className="text-gray-500 text-xs">–</span>
+            <input type="date" value={to}
+              onChange={e => { setTo(e.target.value); setDatePreset('custom'); setPage(0) }}
+              className="[color-scheme:dark] bg-gray-800 border border-gray-700 rounded-lg px-2 py-1
+                         text-gray-200 focus:outline-none focus:border-gray-500 text-xs"
+              style={{ width: '8.5rem' }} />
+          </div>
+        )}
       </div>
 
       {/* Flag-type filter */}

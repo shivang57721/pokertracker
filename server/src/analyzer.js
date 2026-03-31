@@ -131,37 +131,30 @@ function evaluateThreeBet(handClass, heroPos, openerPos) {
   const heroPosLabel   = heroPos || '?';
   const openerPosLabel = norm    || '?';
 
-  let severity, reason;
+  let reason;
 
   if (isPair) {
-    severity = r1 <= RANK_IDX['6'] ? 2 : 1;
-    reason   = r1 <= RANK_IDX['6']
+    reason = r1 <= RANK_IDX['6']
       ? `${handClass} is too small for a 3-bet — small pairs play better as cold-calls or folds`
       : `${handClass} is marginal for a 3-bet vs a ${openerPosLabel} open`;
   } else if (isOffsuit) {
     if (hiR < JACK) {
-      severity = 2;
-      reason   = `${handClass} is offsuit below broadway — poor 3-bet with no blocker value`;
+      reason = `${handClass} is offsuit below broadway — poor 3-bet with no blocker value`;
     } else if (loR <= TEN) {
-      severity = 2;
-      reason   = `${handClass} has a weak kicker for a 3-bet — consider fold or cold-call vs ${openerPosLabel}`;
+      reason = `${handClass} has a weak kicker for a 3-bet — consider fold or cold-call vs ${openerPosLabel}`;
     } else {
-      severity = 1;
-      reason   = `${handClass} is borderline for a 3-bet vs a ${openerPosLabel} open`;
+      reason = `${handClass} is borderline for a 3-bet vs a ${openerPosLabel} open`;
     }
   } else if (isSuited) {
     const gap = hiR - loR;
-    severity = (hiR < TEN && gap > 2) ? 2 : 1;
-    reason   = (hiR < TEN && gap > 2)
+    reason = (hiR < TEN && gap > 2)
       ? `${handClass} is low and disconnected — poor 3-bet bluff with minimal equity`
       : `${handClass} is outside recommended 3-bet bluff range vs a ${openerPosLabel} open`;
   } else {
-    severity = 1;
-    reason   = `${handClass} is outside recommended 3-bet range`;
+    reason = `${handClass} is outside recommended 3-bet range`;
   }
 
   return {
-    severity,
     description: `3-bet ${handClass} from ${heroPosLabel} vs ${openerPosLabel} open — ${reason}`,
   };
 }
@@ -202,7 +195,6 @@ function analyzeHand(hand, hero, allPlayers, allActions) {
         flags.push({
           flag_type: 'open_too_loose',
           street: 'preflop',
-          severity: 2,
           description: `Opened ${handClass} from ${heroPos || '?'} — outside GTO RFI range for that position`,
         });
       }
@@ -218,7 +210,6 @@ function analyzeHand(hand, hero, allPlayers, allActions) {
         flags.push({
           flag_type: 'open_too_tight',
           street: 'preflop',
-          severity: 1,
           description: `Folded ${handClass} from ${heroPos || '?'} — this hand is in the GTO open range`,
         });
       }
@@ -236,7 +227,6 @@ function analyzeHand(hand, hero, allPlayers, allActions) {
         flags.push({
           flag_type: 'open_limp',
           street: 'preflop',
-          severity: 2,
           description: `Limped ${handClass} from ${heroPos || '?'} — open limping is a common leak in 6-max`,
         });
       }
@@ -250,7 +240,6 @@ function analyzeHand(hand, hero, allPlayers, allActions) {
       flags.push({
         flag_type: 'cold_call',
         street: 'preflop',
-        severity: 1,
         description: `Cold-called a raise with ${handClass} from ${heroPos || '?'} — solver prefers 3-bet or fold`,
       });
     }
@@ -268,7 +257,6 @@ function analyzeHand(hand, hero, allPlayers, allActions) {
         flags.push({
           flag_type: 'bb_defence_too_loose',
           street: 'preflop',
-          severity: 1,
           description: `Called a ${openerPos || '?'} open from BB with ${handClass} — outside GTO BB defence range`,
         });
       }
@@ -287,7 +275,6 @@ function analyzeHand(hand, hero, allPlayers, allActions) {
         flags.push({
           flag_type: 'three_bet_too_light',
           street: 'preflop',
-          severity: result.severity,
           description: result.description,
         });
       }
@@ -313,7 +300,6 @@ function analyzeHand(hand, hero, allPlayers, allActions) {
             flags.push({
               flag_type: 'fold_too_strong_3bet',
               street: 'preflop',
-              severity: SEV3.has(handClass) ? 3 : 2,
               description: `Folded ${handClass} to a 3-bet — this hand is too strong to fold 100BB deep`,
             });
           }
@@ -342,28 +328,7 @@ function analyzeHand(hand, hero, allPlayers, allActions) {
   const heroFlopAct  = flop.find(a => a.player === HERO);
   const heroRiverAct = river.find(a => a.player === HERO);
 
-  // ── Flag 6: Missed c-bet (hero IP) ────────────────────────────────────────
-  if (heroPFR && isHU && heroIsIP && heroFlopAct?.action === 'check') {
-    const dry = isDryBoard(flopCards);
-    flags.push({
-      flag_type: 'missed_cbet_ip',
-      street: 'flop',
-      severity: dry ? 2 : 1,
-      description: `PFR checked back ${flopCards.join(' ')} in position HU — missed c-bet${dry ? ' (dry board, higher frequency spot)' : ''}`,
-    });
-  }
-
-  // ── Flag 7: Missed c-bet (hero OOP, dry board only) ───────────────────────
-  if (heroPFR && isHU && heroIsOOP && heroFlopAct?.action === 'check' && isDryBoard(flopCards)) {
-    flags.push({
-      flag_type: 'missed_cbet_oop',
-      street: 'flop',
-      severity: 1,
-      description: `PFR checked ${flopCards.join(' ')} OOP HU on a dry board — GTO c-bets at high frequency here`,
-    });
-  }
-
-  // ── Flag 8: Folded a draw with good pot odds ───────────────────────────────
+  // ── Flag 6: Folded a draw with good pot odds ──────────────────────────────
   for (const [street, streetActions, boardSlice] of [
     ['flop', flop, board.slice(0, 3)],
     ['turn', turn, board.slice(0, 4)],
@@ -394,7 +359,6 @@ function analyzeHand(hand, hero, allPlayers, allActions) {
       flags.push({
         flag_type: 'fold_draw_good_odds',
         street,
-        severity: 2,
         description: `Folded ${drawType} (${handClass}) getting ${(potOdds * 100).toFixed(0)}% pot odds vs ~${(drawEquity * 100).toFixed(0)}% equity — calling is +EV`,
       });
     }
@@ -429,7 +393,6 @@ function analyzeHand(hand, hero, allPlayers, allActions) {
       flags.push({
         flag_type: 'call_bad_pot_odds',
         street,
-        severity: 2,
         description: `Called ${callAmt.toFixed(2)} with ${handClass} (${strength.replace(/_/g, ' ')}) on ${street} facing a ${(lastBet / potAtBet * 100).toFixed(0)}% pot bet — pot odds ${(potOdds * 100).toFixed(0)}%, weak hand, no draw`,
       });
     }
@@ -460,7 +423,6 @@ function analyzeHand(hand, hero, allPlayers, allActions) {
         flags.push({
           flag_type: 'donk_bet',
           street,
-          severity: 1,
           description: `Donk bet ${(ratio * 100).toFixed(0)}% pot on the ${street} with ${handClass} into the preflop aggressor — consider check-raise or check-call instead`,
         });
       }
@@ -481,7 +443,6 @@ function analyzeHand(hand, hero, allPlayers, allActions) {
           flags.push({
             flag_type: 'never_bluffed_busted_draw',
             street: 'river',
-            severity: 1,
             description: `Had a ${drawType} with ${handClass} on ${flopCards.join(' ')}, draw missed, but never bet — missed potential river bluff`,
           });
         }
@@ -507,7 +468,6 @@ function analyzeHand(hand, hero, allPlayers, allActions) {
           flags.push({
             flag_type: 'bet_bet_bet_marginal',
             street: 'river',
-            severity: 2,
             description: `Bet flop/turn/river (avg ${(avgRatio * 100).toFixed(0)}% pot) with ${handClass} (${strength.replace(/_/g, ' ')}) — 3-street barrel usually needs strong hand or air`,
           });
         }
@@ -524,7 +484,6 @@ function analyzeHand(hand, hero, allPlayers, allActions) {
         flags.push({
           flag_type: 'showdown_big_pot_weak_hand',
           street: 'river',
-          severity: potBB >= 60 ? 3 : 2,
           description: `Went to showdown with ${handClass} (${strength.replace(/_/g, ' ')}) in a ${potBB.toFixed(0)} BB pot`,
         });
       }
@@ -542,7 +501,6 @@ function analyzeHand(hand, hero, allPlayers, allActions) {
           flags.push({
             flag_type: 'bet_too_small_strong_hand',
             street: 'river',
-            severity: 1,
             description: `Bet only ${(ratio * 100).toFixed(0)}% pot on river with ${handClass} (${strength.replace(/_/g, ' ')}) — potential missed value`,
           });
         }
@@ -560,7 +518,6 @@ function analyzeHand(hand, hero, allPlayers, allActions) {
         flags.push({
           flag_type: 'check_river_strong_hand',
           street: 'river',
-          severity: 1,
           description: `Checked back river IP with ${handClass} (${strength.replace(/_/g, ' ')}) in a ${pot > 0 ? (pot / bigBlind).toFixed(0) + ' BB' : ''} pot and won — missed value by not betting`,
         });
       }
@@ -609,16 +566,16 @@ async function analyzeAllHands() {
       if (newFlags.length > 0) {
         for (const f of newFlags) {
           db.run(
-            'INSERT INTO hand_flags (hand_id, flag_type, street, severity, description) VALUES (?, ?, ?, ?, ?)',
-            [hand_id, f.flag_type, f.street || null, f.severity, f.description]
+            'INSERT INTO hand_flags (hand_id, flag_type, street, description) VALUES (?, ?, ?, ?)',
+            [hand_id, f.flag_type, f.street || null, f.description]
           );
           flagged++;
         }
       } else {
         // Sentinel so we don't re-analyze this hand
         db.run(
-          'INSERT OR IGNORE INTO hand_flags (hand_id, flag_type, street, severity, description) VALUES (?, ?, ?, ?, ?)',
-          [hand_id, '_analyzed', null, 0, 'analyzed — no flags']
+          'INSERT OR IGNORE INTO hand_flags (hand_id, flag_type, street, description) VALUES (?, ?, ?, ?)',
+          [hand_id, '_analyzed', null, 'analyzed — no flags']
         );
       }
       analyzed++;

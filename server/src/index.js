@@ -54,12 +54,14 @@ app.get('/api/hands', async (req, res) => {
     const player = req.query.player || null;
 
     // Whitelist sort columns to prevent injection
-    const SORT_COLS = new Set(['date_played','hand_id','stakes','total_pot','net_profit','player_position']);
+    const SORT_COLS = new Set(['date_played','hand_id','stakes','total_pot','net_profit','player_position','abs_net_profit']);
     const rawSort   = req.query.sort_by;
     const sortBy    = (rawSort && SORT_COLS.has(rawSort) &&
                        !(rawSort === 'net_profit'      && !player) &&
+                       !(rawSort === 'abs_net_profit'  && !player) &&
                        !(rawSort === 'player_position' && !player))
                       ? rawSort : 'date_played';
+    const sortExpr  = sortBy === 'abs_net_profit' ? 'ABS(net_profit)' : sortBy;
     const sortDir   = req.query.sort_dir === 'asc' ? 'ASC' : 'DESC';
 
     // WHERE conditions on h.* columns
@@ -131,7 +133,7 @@ app.get('/api/hands', async (req, res) => {
       const outerWhere = outerCond.length ? `WHERE ${outerCond.join(' AND ')}` : '';
       const allParams  = [...innerParams, ...outerParams];
 
-      const finalSql = `SELECT * FROM (${innerSql}) ${outerWhere} ORDER BY ${sortBy} ${sortDir} LIMIT ? OFFSET ?`;
+      const finalSql = `SELECT * FROM (${innerSql}) ${outerWhere} ORDER BY ${sortExpr} ${sortDir} LIMIT ? OFFSET ?`;
       const countSql = `SELECT COUNT(*) AS total FROM (${innerSql}) ${outerWhere}`;
 
       const rows     = queryAll(db, finalSql, [...allParams, limit, offset]);
@@ -148,7 +150,7 @@ app.get('/api/hands', async (req, res) => {
     }
 
     // No player — simpler query
-    const sql      = `SELECT h.* FROM hands h ${whereClause} ORDER BY ${sortBy} ${sortDir} LIMIT ? OFFSET ?`;
+    const sql      = `SELECT h.* FROM hands h ${whereClause} ORDER BY ${sortExpr} ${sortDir} LIMIT ? OFFSET ?`;
     const countSql = `SELECT COUNT(*) AS total FROM hands h ${whereClause}`;
 
     const rows     = queryAll(db, sql, [...baseParams, limit, offset]);
@@ -391,19 +393,18 @@ app.post('/api/analyze', async (req, res) => {
   }
 });
 
-// GET /api/flags?flag_type=&min_severity=&limit=&offset=
+// GET /api/flags?flag_type=&limit=&offset=
 // Returns { flags: [...], total_flags: N, flagged_hands: M }
-// Excludes sentinel _analyzed records; flag_type/min_severity are optional filters.
+// Excludes sentinel _analyzed records; flag_type is an optional filter.
 app.get('/api/flags', async (req, res) => {
   try {
     const db          = await getDb();
     const limit       = Math.min(parseInt(req.query.limit)  || 100, 1000);
     const offset      = parseInt(req.query.offset) || 0;
     const flagType    = req.query.flag_type    || null;
-    const minSeverity = parseInt(req.query.min_severity) || 1;
 
-    const conditions = ["flag_type != '_analyzed'", 'severity >= ?'];
-    const params     = [minSeverity];
+    const conditions = ["flag_type != '_analyzed'"];
+    const params     = [];
     if (flagType) { conditions.push('flag_type = ?'); params.push(flagType); }
 
     const where = `WHERE ${conditions.join(' AND ')}`;
@@ -590,8 +591,8 @@ app.get('/api/review/summary', async (req, res) => {
   }
 });
 
-// GET /api/review?flag_type=&min_severity=1&limit=20&offset=0
-// Returns unreviewed flagged hands sorted by max_severity DESC, total_pot DESC
+// GET /api/review?flag_type=&limit=20&offset=0
+// Returns flagged hands sorted by date DESC
 // Each hand includes its flags array and ai_analysis text if present
 app.get('/api/review', async (req, res) => {
   try {
@@ -599,21 +600,22 @@ app.get('/api/review', async (req, res) => {
     const limit         = Math.min(parseInt(req.query.limit)  || 20, 200);
     const offset        = parseInt(req.query.offset) || 0;
     const flagType      = req.query.flag_type    || null;
-    const minSeverity   = parseInt(req.query.min_severity) || 1;
     const reviewedParam = req.query.reviewed ?? 'unreviewed'; // 'unreviewed' | 'reviewed' | 'all'
+
+    const fromDate = req.query.from || null;
+    const toDate   = req.query.to   || null;
 
     const conditions = [
       "h.is_tournament = 0",
       "hf.flag_type != '_analyzed'",
-      "hf.severity >= ?",
     ];
     if (reviewedParam === 'unreviewed') conditions.push("rh.hand_id IS NULL");
     else if (reviewedParam === 'reviewed') conditions.push("rh.hand_id IS NOT NULL");
-    const params = [minSeverity, minSeverity]; // used twice (outer + count)
+    if (fromDate) conditions.push("h.date_played >= ?");
+    if (toDate)   conditions.push("h.date_played <= ?");
 
     if (flagType) {
       conditions.push("h.hand_id IN (SELECT hand_id FROM hand_flags WHERE flag_type = ?)");
-      params.push(flagType, flagType);
     }
 
     const where = `WHERE ${conditions.join(' AND ')}`;
@@ -633,7 +635,6 @@ app.get('/api/review', async (req, res) => {
         h.total_pot, h.big_blind, h.board, h.raw_text,
         hp.position AS hero_position, hp.hole_cards, hp.amount_won,
         hp.amount_won - COALESCE(${netSub}, 0) AS net_profit,
-        MAX(hf.severity) AS max_severity,
         CASE WHEN rh.hand_id IS NOT NULL THEN 1 ELSE 0 END AS is_reviewed,
         ai.analysis AS ai_analysis, ai.model AS ai_model
       FROM hand_flags hf
@@ -643,7 +644,7 @@ app.get('/api/review', async (req, res) => {
       LEFT JOIN ai_analysis ai ON ai.hand_id = h.hand_id
       ${where}
       GROUP BY h.hand_id
-      ORDER BY max_severity DESC, h.total_pot DESC
+      ORDER BY h.date_played DESC
       LIMIT ? OFFSET ?
     `;
 
@@ -656,8 +657,9 @@ app.get('/api/review', async (req, res) => {
       ${where}
     `;
 
-    const paramsSql  = flagType ? [minSeverity, flagType, limit, offset] : [minSeverity, limit, offset];
-    const paramsCount = flagType ? [minSeverity, flagType] : [minSeverity];
+    const baseParams  = [...(fromDate ? [fromDate] : []), ...(toDate ? [toDate] : []), ...(flagType ? [flagType] : [])];
+    const paramsSql   = [...baseParams, limit, offset];
+    const paramsCount = baseParams;
 
     const rows     = queryAll(db, sql, paramsSql);
     const countRow = queryOne(db, countSql, paramsCount);
@@ -669,7 +671,7 @@ app.get('/api/review', async (req, res) => {
     const handIds = rows.map(r => r.hand_id);
     const placeholders = handIds.map(() => '?').join(',');
     const allFlags = queryAll(db,
-      `SELECT * FROM hand_flags WHERE hand_id IN (${placeholders}) AND flag_type != '_analyzed' ORDER BY severity DESC`,
+      `SELECT * FROM hand_flags WHERE hand_id IN (${placeholders}) AND flag_type != '_analyzed' ORDER BY id ASC`,
       handIds
     );
     const flagsByHand = {};

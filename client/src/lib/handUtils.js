@@ -41,8 +41,6 @@ export const FLAG_LABELS = {
   cold_call:                 'Cold Call',
   three_bet_too_light:       '3-Bet Too Light',
   fold_too_strong_3bet:      'Fold Too Strong to 3-Bet',
-  missed_cbet_ip:            'Missed C-Bet (IP)',
-  missed_cbet_oop:           'Missed C-Bet (OOP)',
   fold_draw_good_odds:       'Folded Draw w/ Good Odds',
   call_bad_pot_odds:         'Called w/ Bad Odds',
   never_bluffed_busted_draw: 'Never Bluffed Busted Draw',
